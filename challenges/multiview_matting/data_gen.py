@@ -92,7 +92,7 @@ def place_objects_without_overlap(objects, min_distance_multiplier=1.5):
                 position = np.random.uniform(left, right, size=3)
             else:
                 position = np.random.uniform(-right, -left, size=3)
-                position[1] = np.abs(position[1])
+            position[0] = np.abs(position[0])
             position[2] = 0.5  # Keep objects on the table
             
             # Check distance from all other placed objects
