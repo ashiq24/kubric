@@ -18,21 +18,24 @@ if SHAPENET_PATH == "gs://KUBRIC_SHAPENET_PATH/ShapeNetCore.v2.json":
     raise ValueError("Wrong ShapeNet path. Please visit https://shapenet.org/ "
                                      "agree to terms and conditions, and find the correct path.")
 
+def object_movemet_scheme(pos_1, pos_2, fraction, dir, choice, camera_pos):
+    if choice == 0:
+        pos_1 = move_point(pos_1, camera_pos, fraction) #pos_1 + fraction * dir
+        pos_2 = move_point(pos_2, camera_pos, -fraction) # pos_2 - fraction * dir
+    elif choice == 1:
+        pos_1 =  move_point(pos_1, camera_pos, -fraction) #pos_1 - fraction * dir
+        pos_2 =  move_point(pos_2, camera_pos, fraction) #pos_2 + fraction * dir
+    elif choice == 2:
+        pos_1 = move_point(pos_1, camera_pos, -fraction) #pos_1 + fraction * dir
+        pos_2 = move_point(pos_2, camera_pos, -2*fraction) #pos_2 + fraction * dir
+    elif choice == 3:
+        pos_1 = move_point(pos_1, camera_pos, -2*fraction) #pos_1 - fraction * dir
+        pos_2 = move_point(pos_2, camera_pos, -fraction) #pos_2 - fraction * dir
+    return pos_1, pos_2
 
-def move_point(A, B, fraction, add_noise=True, noise_std=0.01):
+def move_point(A, B, fraction, add_noise=True, noise_std=0.08):
     """
     Move point A towards or away from point B by a specified fraction.
-
-    Parameters:
-        A (np.ndarray or tuple): Coordinates of point A.
-        B (np.ndarray or tuple): Coordinates of point B.
-        fraction (float): The fraction of the distance from A to B to move A.
-                          - If 0 < fraction < 1, A moves closer to B.
-                          - If fraction > 1, A moves beyond B.
-                          - If fraction < 0, A moves away from B.
-
-    Returns:
-        np.ndarray: New coordinates of point A after moving.
     """
     # Convert A and B to numpy arrays if they aren't already
     A, B = np.array(A), np.array(B)
@@ -40,6 +43,7 @@ def move_point(A, B, fraction, add_noise=True, noise_std=0.01):
     # Calculate the direction vector from A to B and normalize it
     direction = B - A
     unit_direction = direction / np.linalg.norm(direction)
+    unit_direction[2] = 0  # No movement in the z-direction
     
     # Move A by the specified fraction along the unit direction vector
     new_A = A + fraction * unit_direction
@@ -48,35 +52,17 @@ def move_point(A, B, fraction, add_noise=True, noise_std=0.01):
         noise = np.random.normal(0, noise_std, 3)
         noise[2] = np.abs(noise[2])
         unit_noise = noise / np.linalg.norm(noise)
+        unit_noise[2] = 0 # No noise in the z-direction
         new_A += np.abs(fraction) * noise_std * unit_noise
     
     return new_A
-
-def sample_point_in_half_sphere_shell(
-        inner_radius: float,
-        outer_radius: float,
-        rng: np.random.RandomState
-        ):
-    """Uniformly sample points that are in a given distance
-         range from the origin and with z >= 0."""
-
-    while True:
-        v = rng.uniform((-outer_radius, -outer_radius, obj_height/1.2),
-                                        (outer_radius, outer_radius, obj_height))
-        len_v = np.linalg.norm(v)
-        correct_angle = True
-        if add_distractors:
-            cam_dir = v[:2] / np.linalg.norm(v[:2])
-            correct_angle = np.all(np.dot(distractor_dir, cam_dir) < np.cos(np.pi / 9.))
-        if inner_radius <= len_v <= outer_radius and correct_angle:
-            return tuple(v)
 
 def place_objects_without_overlap(objects, min_distance_multiplier=1.5):
     """ Places objects randomly on the XY plane without overlap. """
     positions = []
     count = 100000
-    left= 0.2
-    right = 0.8
+    left= 0.1
+    right = 0.4
     for i, obj in enumerate(objects):
         obj_radius = np.linalg.norm(obj.aabbox[1][:1] - obj.aabbox[0][:1])
         min_distance = obj_radius * min_distance_multiplier
@@ -93,7 +79,7 @@ def place_objects_without_overlap(objects, min_distance_multiplier=1.5):
             else:
                 position = np.random.uniform(-right, -left, size=3)
             position[0] = np.abs(position[0])
-            position[2] = 0.5  # Keep objects on the table
+            position[2] = 0.3
             
             # Check distance from all other placed objects
             if all(np.linalg.norm(position[:2] - pos[:2]) >= min_distance for pos in positions):
@@ -109,22 +95,27 @@ def get_camera_position(scene, camera, obj1, obj2, distance=3):
     from the midpoint of the line connecting obj1 and obj2.
     """
     # Calculate the midpoint between obj1 and obj2
-    midpoint = (obj1.position[:2] + obj2.position[:2]) / 2
+    obj_center_1 = obj1.position[:2] + (obj1.aabbox[1][:2] - obj1.aabbox[0][:2]) / 2
+    obj_center_2 = obj2.position[:2] + (obj2.aabbox[1][:2] - obj2.aabbox[0][:2]) / 2
+    midpoint = (obj_center_1 + obj_center_2) / 2
+    #midpoint = (obj1.position[:2] + obj2.position[:2]) / 2
 
     # Calculate the vector connecting obj1 and obj2
-    obj_vector = obj2.position[:2] - obj1.position[:2]
+    obj_vector = obj_center_1 - obj_center_2 #obj2.position[:2] - obj1.position[:2]
 
     # Compute the perpendicular (normal) vector to the line between obj1 and obj2
     # This is achieved by swapping coordinates and negating one component
     normal_vector = np.array([-obj_vector[1], obj_vector[0]])
     normal_vector = normal_vector / np.linalg.norm(normal_vector)  # Normalize it
 
+    normal_vector[1] = 0
     if normal_vector[0] < 0:
         normal_vector = -normal_vector
 
     # Position the camera along this normal vector, at a distance of `distance`
     camera_xy_position = midpoint + normal_vector * distance
-    return (camera_xy_position[0], camera_xy_position[1], 1.5)
+    print(obj1.position, obj2.position, obj_center_1, obj_center_2,  midpoint, normal_vector, camera_xy_position)
+    return (camera_xy_position[0], camera_xy_position[1], 1.5), [normal_vector[0], normal_vector[1], 0]
 
 
 manifest_path = file_io.as_path(SHAPENET_PATH)
@@ -154,7 +145,12 @@ parser.add_argument("--hdri_assets", type=str,
 
 parser.add_argument("--floor_friction", type=float, default=1.0)
 parser.add_argument("--floor_restitution", type=float, default=0.0)
-parser.add_argument("--only_scale", type=bool, default=True)
+parser.add_argument("--only_scale", type=bool, default=False)
+# la la 
+parser.add_argument("--gso_assets", type=str,
+                    default="gs://kubric-public/assets/GSO/GSO.json")
+parser.add_argument("--objects_split", choices=["train", "test"],
+                    default="train")
 
 FLAGS = parser.parse_args()
 
@@ -166,24 +162,38 @@ else:
 
 
 
-# --- Fetch a random asset
-asset_source = kb.AssetSource.from_manifest(SHAPENET_PATH)
-# all_ids = list(asset_source.db['id'])
-all_ids = [name for name, unused_spec in asset_source._assets.items()]
-num_total_objs = len(all_ids)
-fraction = 0.1
+# # --- Fetch a random asset
+# asset_source = kb.AssetSource.from_manifest(SHAPENET_PATH)
+# # all_ids = list(asset_source.db['id'])
+# all_ids = [name for name, unused_spec in asset_source._assets.items()]
+# num_total_objs = len(all_ids)
+# fraction = 0.1
 
-rng_train_test_split = np.random.RandomState(1)
-rng_train_test_split.shuffle(all_ids)
-held_out_obj_ids = all_ids[:math.ceil(fraction * num_total_objs)]
+# rng_train_test_split = np.random.RandomState(1)
+# rng_train_test_split.shuffle(all_ids)
+# held_out_obj_ids = all_ids[:math.ceil(fraction * num_total_objs)]
 
-# held_out_obj_ids = list(asset_source.db.sample(
-#     frac=fraction, replace=False, random_state=42)["id"])
-train_obj_ids = [id for id in all_ids if
-                                 id not in held_out_obj_ids]
+# # held_out_obj_ids = list(asset_source.db.sample(
+# #     frac=fraction, replace=False, random_state=42)["id"])
+# train_obj_ids = [id for id in all_ids if
+#                                  id not in held_out_obj_ids]
+
+gso = kb.AssetSource.from_manifest(FLAGS.gso_assets)
+
+train_split, test_split = gso.get_test_split(fraction=0.7)
+if FLAGS.objects_split == "train":
+  logging.info("Choosing one of the %d training objects...", len(train_split))
+  active_split = train_split
+else:
+  logging.info("Choosing one of the %d held-out objects...", len(test_split))
+  active_split = test_split
+
+print("active_split", len(active_split))
+
 rng = np.random.RandomState(FLAGS.seed)
 for o in range(10000):
     # --- Common setups
+    print("*******Rendering image*********", o)
     kb.utils.setup_logging(FLAGS.logging_level)
     kb.utils.log_my_flags(FLAGS)
     job_dir = kb.as_path('../rayyeh/data/Ashiq/local_scaling/') #kb.as_path(FLAGS.job_dir)
@@ -199,13 +209,14 @@ for o in range(10000):
     object_list = []
     
     for k in range(2):
-        if FLAGS.backgrounds_split == "train":
-            asset_id = rng.choice(train_obj_ids)
-        else:
-            asset_id = rng.choice(held_out_obj_ids)
+        # if FLAGS.backgrounds_split == "train":
+        #     asset_id = rng.choice(train_obj_ids)
+        # else:
+        #     asset_id = rng.choice(held_out_obj_ids)
 
-        obj = asset_source.create(asset_id=asset_id)
-        logging.info(f"selected '{asset_id}'")
+        #obj = asset_source.create(asset_id=asset_id)
+        obj = gso.create(asset_id=rng.choice(active_split))
+        #logging.info(f"selected '{asset_id}'")
 
         # --- make object flat on X/Y and not penetrate floor
         obj.quaternion = kb.Quaternion(axis=[1,0,0], degrees=90)
@@ -221,14 +232,18 @@ for o in range(10000):
         # Difference along the y-axis gives the length (or depth)
         obj_length = np.abs(obj.aabbox[1][1] - obj.aabbox[0][1])
 
+        obj.asset_id
 
+        # obj.metadata = {
+        #         "asset_id": obj.asset_id,
+        #         "category": [spec for name, spec in asset_source._assets.items()
+        #                                 if name == obj.asset_id][0]['metadata']["category"],
+        # }
 
         obj.metadata = {
-                "asset_id": obj.asset_id,
-                "category": [spec for name, spec in asset_source._assets.items()
-                                        if name == obj.asset_id][0]['metadata']["category"],
+                "asset_id": obj.asset_id
         }
-        obj.scale = (1/(2*obj_size), 1/(2*obj_size), 1/(2*obj_size))
+        obj.scale = (2, 2, 2)
         print("obj_size: ", obj_size, obj_radius, obj_height, obj_width, obj_length)
         scene.add(obj)
         object_list.append(obj)
@@ -236,7 +251,7 @@ for o in range(10000):
 
 
     # place_objects(object_list[0], object_list[1], 0.3)
-    place_objects_without_overlap(object_list, min_distance_multiplier=2.0)
+    place_objects_without_overlap(object_list, min_distance_multiplier=1.0)
 
     size_multiple = 1.5
 
@@ -244,10 +259,10 @@ for o in range(10000):
             color=kb.Color.from_hsv(rng.uniform(), 1, 1),
             metallic=1.0, roughness=0.2, ior=2.5)
 
-    table = kb.Cube(name="floor",
-                    scale=(1*size_multiple, 1*size_multiple, 0.02),
-                    position=(0, 0, -0.02), material=material)
-    scene += table
+    # table = kb.Cube(name="floor",
+    #                 scale=(1*size_multiple, 1*size_multiple, 0.02),
+    #                 position=(0, 0, -0.02), material=material)
+    # scene += table
 
     logging.info("Loading background HDRIs from %s", FLAGS.hdri_dir)
 
@@ -269,11 +284,11 @@ for o in range(10000):
 
     kubasic = kb.AssetSource.from_manifest("gs://kubric-public/assets/KuBasic/KuBasic.json")
     dome = kubasic.create(asset_id="dome", name="dome",
-                                                friction=FLAGS.floor_friction,
-                                                restitution=FLAGS.floor_restitution,
-                                                static=True, background=True)
+                        friction=FLAGS.floor_friction,
+                        restitution=FLAGS.floor_restitution,
+                        static=True, background=True)
     assert isinstance(dome, kb.FileBasedObject)
-    dome.scale = (0.8, 0.8, 0.8)
+    #clear dome.scale = (0.8, 0.8, 0.8)
     scene += dome
 
     blender_renderer = [v for v in scene.views if isinstance(v, Blender)]
@@ -300,9 +315,9 @@ for o in range(10000):
     # set_camera_position(scene, scene.camera, object_list[0], object_list[1], distance=3)
     scene.camera = kb.PerspectiveCamera()
     scene.camera.fov = 60
-    scene.camera.aspect_ratio = 1.0
-    cam_pos = get_camera_position(scene, scene.camera, object_list[0], object_list[1], distance=4)
-    
+    scene.camera.aspect_ratio = 1.5
+    cam_pos, ca_xy = get_camera_position(scene, scene.camera, object_list[0], object_list[1], distance=2.5)
+    choice = np.random.randint(4)
     factor = 1.1
     inv_factor = 1/factor
     for frame in range(FLAGS.frame_start, FLAGS.frame_end + 1):
@@ -313,17 +328,26 @@ for o in range(10000):
             object_list[0].scale = (object_list[0].scale[0]*factor, object_list[0].scale[1]*factor, object_list[0].scale[2]*factor)
             object_list[1].scale = (object_list[1].scale[0]*inv_factor, object_list[1].scale[1]*inv_factor, object_list[1].scale[2]*inv_factor)
         else:
-            object_list[0].position = move_point(object_list[0].position, cam_pos, 0.3)
-            object_list[1].position = move_point(object_list[1].position, cam_pos, -0.3)
+            # object movement scheme
+            pos1, pos2 = object_movemet_scheme(object_list[0].position, object_list[1].position, 0.3, ca_xy, choice, cam_pos)
+            # object_list[0].position = (object_list[0].position[0]+0.3*ca_xy[0], object_list[0].position[1]+0.3*ca_xy[1], object_list[0].position[2])
+            # object_list[1].position = (object_list[1].position[0]-0.3*ca_xy[0], object_list[1].position[1]-0.3*ca_xy[1], object_list[1].position[2])
+            object_list[0].position = (pos1[0], pos1[1], object_list[0].position[2])
+            object_list[1].position = (pos2[0], pos2[1], object_list[1].position[2])
+        if frame == FLAGS.frame_start:   
+            scene.camera.look_at(((object_list[0].position[0]+object_list[1].position[0])/2,\
+                (object_list[0].position[1]+object_list[1].position[1])/2,\
+                    np.mean([np.abs(np.abs(obj.aabbox[1][2] - obj.aabbox[0][2])) for obj in object_list])/2))
         
-        scene.camera.look_at(((object_list[0].position[0]+object_list[1].position[0])/2,\
-            (object_list[0].position[1]+object_list[1].position[1])/2,\
-                 np.mean([np.abs(np.abs(obj.aabbox[1][2] - obj.aabbox[0][2])) for obj in object_list])/2))
         
         scene.camera.keyframe_insert("position", frame)
         scene.camera.keyframe_insert("quaternion", frame)
-        object_list[0].keyframe_insert("scale", frame)
-        object_list[1].keyframe_insert("scale", frame)
+        if FLAGS.only_scale:
+            object_list[0].keyframe_insert("scale", frame)
+            object_list[1].keyframe_insert("scale", frame)
+        else:
+            object_list[0].keyframe_insert("position", frame)
+            object_list[1].keyframe_insert("position", frame)
 
 
     # --- Rendering

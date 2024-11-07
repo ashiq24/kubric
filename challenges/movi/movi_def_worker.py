@@ -36,13 +36,13 @@ parser = kb.ArgumentParser()
 parser.add_argument("--objects_split", choices=["train", "test"],
                     default="train")
 # Configuration for the objects of the scene
-parser.add_argument("--min_num_static_objects", type=int, default=10,
+parser.add_argument("--min_num_static_objects", type=int, default=1,
                     help="minimum number of static (distractor) objects")
-parser.add_argument("--max_num_static_objects", type=int, default=20,
+parser.add_argument("--max_num_static_objects", type=int, default=2,
                     help="maximum number of static (distractor) objects")
-parser.add_argument("--min_num_dynamic_objects", type=int, default=1,
+parser.add_argument("--min_num_dynamic_objects", type=int, default=0,
                     help="minimum number of dynamic (tossed) objects")
-parser.add_argument("--max_num_dynamic_objects", type=int, default=3,
+parser.add_argument("--max_num_dynamic_objects", type=int, default=0,
                     help="maximum number of dynamic (tossed) objects")
 # Configuration for the floor and background
 parser.add_argument("--floor_friction", type=float, default=0.3)
@@ -64,7 +64,7 @@ parser.add_argument("--hdri_assets", type=str,
 parser.add_argument("--gso_assets", type=str,
                     default="gs://kubric-public/assets/GSO/GSO.json")
 parser.add_argument("--save_state", dest="save_state", action="store_true")
-parser.set_defaults(save_state=False, frame_end=24, frame_rate=12,
+parser.set_defaults(save_state=False, frame_end=1, frame_rate=1,
                     resolution=256)
 FLAGS = parser.parse_args()
 
@@ -276,7 +276,7 @@ if FLAGS.save_state:
 # Run dynamic objects simulation
 logging.info("Running the simulation ...")
 animation, collisions = simulator.run(frame_start=0,
-                                      frame_end=scene.frame_end+1)
+                                      frame_end=1)
 
 # --- Rendering
 if FLAGS.save_state:
