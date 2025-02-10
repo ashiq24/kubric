@@ -3,11 +3,12 @@ from pathlib import Path
 import logging
 import numpy as np
 import tensorflow as tf
-
+import json
 import kubric as kb
 from kubric.renderer import Blender as KubricRenderer
 from kubric.renderer import Blender
 from kubric import file_io
+import os
 import bpy
 
 # TODO: go to https://shapenet.org/ create an account and agree to the terms
@@ -27,9 +28,9 @@ def object_movemet_scheme(pos_1, pos_2, fraction, dir, choice, camera_pos):
         pos_2 =  move_point(pos_2, camera_pos, fraction) #pos_2 + fraction * dir
     elif choice == 2:
         pos_1 = move_point(pos_1, camera_pos, -fraction) #pos_1 + fraction * dir
-        pos_2 = move_point(pos_2, camera_pos, -2*fraction) #pos_2 + fraction * dir
+        pos_2 = move_point(pos_2, camera_pos, -1.5*fraction) #pos_2 + fraction * dir
     elif choice == 3:
-        pos_1 = move_point(pos_1, camera_pos, -2*fraction) #pos_1 - fraction * dir
+        pos_1 = move_point(pos_1, camera_pos, -1.5*fraction) #pos_1 - fraction * dir
         pos_2 = move_point(pos_2, camera_pos, -fraction) #pos_2 - fraction * dir
     return pos_1, pos_2
 
@@ -130,7 +131,7 @@ parser = kb.ArgumentParser()
 parser.set_defaults(
     seed=0,
     frame_start=1,
-    frame_end=3,
+    frame_end=5,
     resolution=(256, 256),
 )
 
@@ -147,10 +148,15 @@ parser.add_argument("--floor_friction", type=float, default=1.0)
 parser.add_argument("--floor_restitution", type=float, default=0.0)
 parser.add_argument("--only_scale", type=bool, default=False)
 # la la 
+parser.add_argument("--skip_rendering", type=int, default=-1)
+parser.add_argument("--movement_rate", type=float, default=0.2)
+
 parser.add_argument("--gso_assets", type=str,
                     default="gs://kubric-public/assets/GSO/GSO.json")
 parser.add_argument("--objects_split", choices=["train", "test"],
                     default="train")
+
+parser.add_argument("--save_path", type=str, default="../rayyeh/data/Ashiq/local_scaling_v3/")
 
 FLAGS = parser.parse_args()
 
@@ -161,26 +167,9 @@ else:
     add_distractors = False
 
 
-
-# # --- Fetch a random asset
-# asset_source = kb.AssetSource.from_manifest(SHAPENET_PATH)
-# # all_ids = list(asset_source.db['id'])
-# all_ids = [name for name, unused_spec in asset_source._assets.items()]
-# num_total_objs = len(all_ids)
-# fraction = 0.1
-
-# rng_train_test_split = np.random.RandomState(1)
-# rng_train_test_split.shuffle(all_ids)
-# held_out_obj_ids = all_ids[:math.ceil(fraction * num_total_objs)]
-
-# # held_out_obj_ids = list(asset_source.db.sample(
-# #     frac=fraction, replace=False, random_state=42)["id"])
-# train_obj_ids = [id for id in all_ids if
-#                                  id not in held_out_obj_ids]
-
 gso = kb.AssetSource.from_manifest(FLAGS.gso_assets)
 
-train_split, test_split = gso.get_test_split(fraction=0.7)
+train_split, test_split = gso.get_test_split(fraction=0.903)
 if FLAGS.objects_split == "train":
   logging.info("Choosing one of the %d training objects...", len(train_split))
   active_split = train_split
@@ -188,7 +177,12 @@ else:
   logging.info("Choosing one of the %d held-out objects...", len(test_split))
   active_split = test_split
 
-print("active_split", len(active_split))
+print("Number of objcets", len(active_split))
+## save the list of active_split as json
+
+with open(os.path.join(FLAGS.save_path,'object_list.json'), 'w') as f:
+    json.dump(active_split, f)
+
 
 rng = np.random.RandomState(FLAGS.seed)
 for o in range(10000):
@@ -196,7 +190,7 @@ for o in range(10000):
     print("*******Rendering image*********", o)
     kb.utils.setup_logging(FLAGS.logging_level)
     kb.utils.log_my_flags(FLAGS)
-    job_dir = kb.as_path('../rayyeh/data/Ashiq/local_scaling/') #kb.as_path(FLAGS.job_dir)
+    job_dir = kb.as_path(FLAGS.save_path)
     
     scene = kb.Scene.from_flags(FLAGS)
 
@@ -209,14 +203,7 @@ for o in range(10000):
     object_list = []
     
     for k in range(2):
-        # if FLAGS.backgrounds_split == "train":
-        #     asset_id = rng.choice(train_obj_ids)
-        # else:
-        #     asset_id = rng.choice(held_out_obj_ids)
-
-        #obj = asset_source.create(asset_id=asset_id)
         obj = gso.create(asset_id=rng.choice(active_split))
-        #logging.info(f"selected '{asset_id}'")
 
         # --- make object flat on X/Y and not penetrate floor
         obj.quaternion = kb.Quaternion(axis=[1,0,0], degrees=90)
@@ -232,14 +219,6 @@ for o in range(10000):
         # Difference along the y-axis gives the length (or depth)
         obj_length = np.abs(obj.aabbox[1][1] - obj.aabbox[0][1])
 
-        obj.asset_id
-
-        # obj.metadata = {
-        #         "asset_id": obj.asset_id,
-        #         "category": [spec for name, spec in asset_source._assets.items()
-        #                                 if name == obj.asset_id][0]['metadata']["category"],
-        # }
-
         obj.metadata = {
                 "asset_id": obj.asset_id
         }
@@ -252,6 +231,11 @@ for o in range(10000):
 
     # place_objects(object_list[0], object_list[1], 0.3)
     place_objects_without_overlap(object_list, min_distance_multiplier=1.0)
+
+    if o <= FLAGS.skip_rendering:
+        print("**Skipping rendering for object**", o)
+        kb.done()
+        continue
 
     size_multiple = 1.5
 
@@ -318,8 +302,13 @@ for o in range(10000):
     scene.camera.aspect_ratio = 1.5
     cam_pos, ca_xy = get_camera_position(scene, scene.camera, object_list[0], object_list[1], distance=2.5)
     choice = np.random.randint(4)
-    factor = 1.1
-    inv_factor = 1/factor
+    if choice % 2 == 0:
+        factor = 1.1
+        inv_factor = 1/factor
+    else:
+        factor = 0.9
+        inv_factor = 1/factor
+        
     for frame in range(FLAGS.frame_start, FLAGS.frame_end + 1):
         print("obj_size", obj_size)
         print("object postion", obj.position)
@@ -329,7 +318,7 @@ for o in range(10000):
             object_list[1].scale = (object_list[1].scale[0]*inv_factor, object_list[1].scale[1]*inv_factor, object_list[1].scale[2]*inv_factor)
         else:
             # object movement scheme
-            pos1, pos2 = object_movemet_scheme(object_list[0].position, object_list[1].position, 0.3, ca_xy, choice, cam_pos)
+            pos1, pos2 = object_movemet_scheme(object_list[0].position, object_list[1].position, FLAGS.movement_rate, ca_xy, choice, cam_pos)
             # object_list[0].position = (object_list[0].position[0]+0.3*ca_xy[0], object_list[0].position[1]+0.3*ca_xy[1], object_list[0].position[2])
             # object_list[1].position = (object_list[1].position[0]-0.3*ca_xy[0], object_list[1].position[1]-0.3*ca_xy[1], object_list[1].position[2])
             object_list[0].position = (pos1[0], pos1[1], object_list[0].position[2])
@@ -368,6 +357,11 @@ for o in range(10000):
     # Save depth map
     depth_map = data_stack["depth"]
     kb.file_io.write_depth_batch(depth_map, job_dir, file_template=str(o)+"_depth_{:05d}.tiff")
+
+    # saving normal
+    # Save surface normals
+    normal_map = data_stack["normal"]  # Assuming "normal" contains the surface normal data
+    kb.file_io.write_normal_batch(normal_map, job_dir, file_template=str(o)+"_normal_{:05d}.png")
 
     # --- Collect metadata
     logging.info("Collecting and storing metadata for each object.")
